@@ -151,6 +151,10 @@ static void adc_setup(void)
 	int i;
 
 	rcc_periph_clock_enable(RCC_ADC1);
+  gpio_set_mode(GPIOA, GPIO_MODE_INPUT, GPIO_CNF_INPUT_ANALOG, GPIO0);
+	gpio_set_mode(GPIOA, GPIO_MODE_INPUT, GPIO_CNF_INPUT_ANALOG, GPIO1);
+  gpio_set_mode(GPIOA, GPIO_MODE_INPUT, GPIO_CNF_INPUT_ANALOG, GPIO2);
+	gpio_set_mode(GPIOA, GPIO_MODE_INPUT, GPIO_CNF_INPUT_ANALOG, GPIO3);
 
 	/* Make sure the ADC doesn't run during config. */
 	adc_power_off(ADC1);
@@ -174,24 +178,35 @@ static void adc_setup(void)
 	adc_calibrate(ADC1);
 }
 
-static void my_usart_print_int(uint32_t usart, int value)
+static uint16_t read_adc_naiive(uint8_t channel)
 {
-	int8_t i;
+	uint8_t channel_array[16] = {};
+	channel_array[0] = channel;
+	adc_set_regular_sequence(ADC1, 1, channel_array);
+	adc_start_conversion_direct(ADC1);
+	while (!adc_eoc(ADC1));
+	uint16_t reg16 = adc_read_regular(ADC1);
+	return reg16;
+}
+
+static void int2buf(uint16_t value, char *buffer)
+{
 	uint8_t nr_digits = 0;
-	char buffer[25];
 
 	if (value < 0) {
-		usart_send_blocking(usart, '-');
+		buffer[nr_digits++] = '-';
 		value = value * -1;
 	}
+
+  if (value == 0) {
+		buffer[nr_digits++] = '0';
+  }
 
 	while (value > 0) {
 		buffer[nr_digits++] = "0123456789"[value % 10];
 		value /= 10;
 	}
-
-	for (i = nr_digits; i >= 0; i--)
-		usart_send_blocking(usart, buffer[i]);
+  buffer[nr_digits] = '\0';
 }
 
 int main(void)
@@ -212,17 +227,21 @@ int main(void)
   u8g2_ClearBuffer(&u8g2);
 
 
-  /* Select the channel we want to convert. 16=temperature_sensor. */
-  channel_array[0] = 16;
-  adc_set_regular_sequence(ADC1, 1, channel_array);
-  
   int j = 0;
 	while(1) {
+    uint16_t input_adc[4];
+    for (int i = 0; i < 4; i++)
+      input_adc[i]= read_adc_naiive(i);
     u8g2_FirstPage(&u8g2);
+    char buf[32];
     do {
       u8g2_DrawLine(&u8g2, 64-j, 64-j, j, j);
       u8g2_SetFont(&u8g2, u8g2_font_amstrad_cpc_extended_8f);
       u8g2_DrawStr(&u8g2, 10, 10, "Hello world");
+      for (int i = 0; i < 4; i++) {
+        int2buf(input_adc[i], buf);
+        u8g2_DrawStr(&u8g2, 0, (i * 10) + 20, buf);
+      }
     } while ( u8g2_NextPage(&u8g2) );
 
     if (j == 64) {
