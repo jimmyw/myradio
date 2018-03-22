@@ -22,7 +22,10 @@
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/stm32/adc.h>
 #include <libopencm3/stm32/usart.h>
+#include <libopencm3/stm32/dma.h>
+#include <libopencm3/stm32/timer.h>
 #include <libopencm3/cm3/systick.h>
+#include <libopencm3/cm3/nvic.h>
 #include <libopencm3/stm32/i2c.h>
 #include "u8g2.h"
 
@@ -147,25 +150,38 @@ static void gpio_setup(void)
 
 }
 
+#define ADC_CHANNEL_COUNT 4
+static uint16_t adc_data[ADC_CHANNEL_COUNT];
+
 static void adc_setup(void)
 {
 	int i;
+  for (int i = 0; i < 4; i++)
+    adc_data[i] = i;
 
 	rcc_periph_clock_enable(RCC_ADC1);
+  rcc_periph_clock_enable(RCC_DMA1);
   gpio_set_mode(GPIOA, GPIO_MODE_INPUT, GPIO_CNF_INPUT_ANALOG, GPIO0);
 	gpio_set_mode(GPIOA, GPIO_MODE_INPUT, GPIO_CNF_INPUT_ANALOG, GPIO1);
   gpio_set_mode(GPIOA, GPIO_MODE_INPUT, GPIO_CNF_INPUT_ANALOG, GPIO2);
 	gpio_set_mode(GPIOA, GPIO_MODE_INPUT, GPIO_CNF_INPUT_ANALOG, GPIO3);
-
+    
 	/* Make sure the ADC doesn't run during config. */
 	adc_power_off(ADC1);
 
 	/* We configure everything for one single conversion. */
-	adc_disable_scan_mode(ADC1);
-	adc_set_single_conversion_mode(ADC1);
+	//adc_disable_scan_mode(ADC1);
+	//adc_set_single_conversion_mode(ADC1);
+  adc_set_continuous_conversion_mode(ADC1);
 	adc_disable_external_trigger_regular(ADC1);
 	adc_set_right_aligned(ADC1);
+  //adc_set_resolution(ADC1, ADC_RESOLUTION_12BIT);
+  adc_disable_analog_watchdog_regular(ADC1);
+    
+  uint8_t channels[] = { 0, 1, 2, 3};
 	adc_set_sample_time_on_all_channels(ADC1, ADC_SMPR_SMP_28DOT5CYC);
+  //adc_set_sample_time_on_all_channels(ADC1, ADC_SMPTIME_041DOT5);
+  adc_set_regular_sequence(ADC1, sizeof(channels), channels);
 
 	adc_power_on(ADC1);
 
@@ -173,9 +189,55 @@ static void adc_setup(void)
 	for (i = 0; i < 800000; i++)    /* Wait a bit. */
 		__asm__("nop");
 
-	adc_reset_calibration(ADC1);
-	adc_calibrate(ADC1);
+	//adc_reset_calibration(ADC1);
+	//adc_calibrate(ADC1);
+    
+  adc_enable_dma(ADC1);
 }
+
+static void adc_dma_arm(void) {
+    // start conversion
+    dma_enable_channel(DMA1, DMA_CHANNEL1);
+    adc_start_conversion_regular(ADC1);
+}
+
+static void adc_init_dma(void) {
+
+    // clean init
+    dma_channel_reset(DMA1, DMA_CHANNEL1);
+
+    // DO NOT use circular mode, we will retrigger dma on our own!
+    dma_enable_circular_mode(DMA1, DMA_CHANNEL1);
+
+
+    // high priority
+    dma_set_priority(DMA1, DMA_CHANNEL1, DMA_CCR_PL_HIGH);
+
+    // source and destination 16bit
+    dma_set_memory_size(DMA1, DMA_CHANNEL1, DMA_CCR_MSIZE_16BIT);
+    dma_set_peripheral_size(DMA1, DMA_CHANNEL1, DMA_CCR_PSIZE_16BIT);
+
+    // automatic memory destination increment enable.
+    dma_enable_memory_increment_mode(DMA1, DMA_CHANNEL1);
+
+    // source address increment disable
+    dma_disable_peripheral_increment_mode(DMA1, DMA_CHANNEL1);
+
+    // Location assigned to peripheral register will be source
+    dma_set_read_from_peripheral(DMA1, DMA_CHANNEL1);
+
+    // source and destination start addresses
+    dma_set_peripheral_address(DMA1, DMA_CHANNEL1, (uint32_t)&ADC1_DR);
+    dma_set_memory_address(DMA1, DMA_CHANNEL1, (uint32_t)adc_data);
+
+    // chunk of data to be transfered
+    dma_set_number_of_data(DMA1, DMA_CHANNEL1, ADC_CHANNEL_COUNT);
+
+    // start conversion:
+    adc_dma_arm();
+}
+
+
 
 static uint16_t read_adc_naiive(uint8_t channel)
 {
@@ -251,6 +313,7 @@ int main(void)
 	//usart_setup();
   //systick_setup();
 	adc_setup();
+  adc_init_dma();
 
   u8g2_Setup_ssd1306_i2c_128x64_noname_2(&u8g2, U8G2_R0, u8x8_byte_sw_i2c, u8x8_gpio_and_delay_i2c);
 
@@ -260,14 +323,8 @@ int main(void)
 
 
   int j = 0;
-  uint16_t input_adc[4];
   char buf[32];
 	while(1) {
-    // Read the adc
-    gpio_clear(GPIOB, GPIO3);
-    for (int i = 0; i < 4; i++)
-      input_adc[i]= read_adc_naiive(i);
-    gpio_set(GPIOB, GPIO3);
 
     // Render screen
     u8g2_FirstPage(&u8g2);
@@ -276,9 +333,9 @@ int main(void)
       u8g2_DrawLine(&u8g2, 64-j, 64-j, j, j);
       u8g2_SetFont(&u8g2, u8g2_font_amstrad_cpc_extended_8f);
       for (int i = 0; i < 4; i++) {
-        int2bufhex(input_adc[i], buf);
+        int2bufhex(adc_data[i], buf);
         u8g2_DrawStr(&u8g2, 0, (i * 10) + 10, buf);
-        u8g2_DrawLine(&u8g2, 0, (i * 2) + 50, input_adc[i] * 128 / 0xfff, (i * 2) + 50); // 128 px wide screen
+        u8g2_DrawLine(&u8g2, 0, (i * 2) + 50, adc_data[i] * 128 / 0xfff, (i * 2) + 50); // 128 px wide screen
       }
     } while ( u8g2_NextPage(&u8g2) );
     gpio_set(GPIOB, GPIO4);
