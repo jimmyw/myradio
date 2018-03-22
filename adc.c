@@ -137,10 +137,12 @@ static void gpio_setup(void)
 	rcc_periph_clock_enable(RCC_GPIOC);
 	rcc_periph_clock_enable(RCC_AFIO);
 
+  // Turn off jtag mode
   gpio_primary_remap(AFIO_MAPR_SWJ_CFG_JTAG_OFF_SW_ON,0);
   gpio_set(GPIOB, GPIO3);
   gpio_set(GPIOB, GPIO4);
-  
+ 
+  // Enable output on the leds 
   gpio_set_mode(GPIOB, GPIO_MODE_OUTPUT_50_MHZ, GPIO_CNF_OUTPUT_PUSHPULL, GPIO3);
   gpio_set_mode(GPIOB, GPIO_MODE_OUTPUT_50_MHZ, GPIO_CNF_OUTPUT_PUSHPULL, GPIO4);
 
@@ -164,8 +166,6 @@ static void adc_setup(void)
 	adc_set_single_conversion_mode(ADC1);
 	adc_disable_external_trigger_regular(ADC1);
 	adc_set_right_aligned(ADC1);
-	/* We want to read the temperature sensor, so we have to enable it. */
-	adc_enable_temperature_sensor();
 	adc_set_sample_time_on_all_channels(ADC1, ADC_SMPR_SMP_28DOT5CYC);
 
 	adc_power_on(ADC1);
@@ -209,6 +209,38 @@ static void int2buf(uint16_t value, char *buffer)
   buffer[nr_digits] = '\0';
 }
 
+static void int2bufbin(uint16_t value, char *buffer)
+{
+  int nr_digits = 0;
+	for (int i = 16; i > 0; i--) {
+		buffer[nr_digits++] = (value & (1<<i)) ? '1' : '0';
+	}
+  buffer[nr_digits] = '\0';
+}
+
+void int2bufhex(uint16_t num, char *outbuf)
+{
+
+    int i = 12;
+    int j = 2;
+    outbuf[0]='0';
+    outbuf[1]='x';
+
+    do{
+        outbuf[i] = "0123456789ABCDEF"[num % 16];
+        i--;
+        num = num/16;
+    }while( num > 0);
+
+    while( ++i < 13){
+       outbuf[j++] = outbuf[i];
+    }
+
+    outbuf[j] = 0;
+
+}
+
+
 int main(void)
 {
 	uint8_t channel_array[16];
@@ -217,7 +249,7 @@ int main(void)
   rcc_clock_setup_in_hse_12mhz_out_72mhz();
  
   gpio_setup(); 
-	usart_setup();
+	//usart_setup();
 	adc_setup();
 
   u8g2_Setup_ssd1306_i2c_128x64_noname_2(&u8g2, U8G2_R0, u8x8_byte_sw_i2c, u8x8_gpio_and_delay_i2c);
@@ -228,21 +260,28 @@ int main(void)
 
 
   int j = 0;
+  uint16_t input_adc[4];
+  char buf[32];
 	while(1) {
-    uint16_t input_adc[4];
+    // Read the adc
+    gpio_clear(GPIOB, GPIO3);
     for (int i = 0; i < 4; i++)
       input_adc[i]= read_adc_naiive(i);
+    gpio_set(GPIOB, GPIO3);
+
+    // Render screen
     u8g2_FirstPage(&u8g2);
-    char buf[32];
+    gpio_clear(GPIOB, GPIO4);
     do {
       u8g2_DrawLine(&u8g2, 64-j, 64-j, j, j);
       u8g2_SetFont(&u8g2, u8g2_font_amstrad_cpc_extended_8f);
-      u8g2_DrawStr(&u8g2, 10, 10, "Hello world");
       for (int i = 0; i < 4; i++) {
-        int2buf(input_adc[i], buf);
-        u8g2_DrawStr(&u8g2, 0, (i * 10) + 20, buf);
+        int2bufhex(input_adc[i], buf);
+        u8g2_DrawStr(&u8g2, 0, (i * 10) + 10, buf);
+        u8g2_DrawLine(&u8g2, 0, (i * 2) + 50, input_adc[i] * 128 / 0xfff, (i * 2) + 50); // 128 px wide screen
       }
     } while ( u8g2_NextPage(&u8g2) );
+    gpio_set(GPIOB, GPIO4);
 
     if (j == 64) {
       j=0;
@@ -255,13 +294,6 @@ int main(void)
     //usart_send_blocking(USART1, 'c');
     //usart_send_blocking(USART1, ':');
     //usart_send_blocking(USART1, ' ');
-
-    //adc_start_conversion_direct(ADC1);
-    //while (!(ADC_SR(ADC1) & ADC_SR_EOC)) {};
-    //temperature = ADC_DR(ADC1);
-    //my_usart_print_int(USART1, temperature);
-    //usart_send_blocking(USART1, '\n');
-
 
   }; /* Halt. */
 
