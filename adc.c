@@ -127,7 +127,6 @@ static void usart_setup(void)
 
 	/* Finally enable the USART. */
 	usart_enable(USART1);
-  systick_setup();
 }
 
 static void gpio_setup(void)
@@ -250,6 +249,7 @@ int main(void)
  
   gpio_setup(); 
 	//usart_setup();
+  //systick_setup();
 	adc_setup();
 
   u8g2_Setup_ssd1306_i2c_128x64_noname_2(&u8g2, U8G2_R0, u8x8_byte_sw_i2c, u8x8_gpio_and_delay_i2c);
