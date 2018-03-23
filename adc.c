@@ -187,6 +187,16 @@ static void adc_setup(void)
   //adc_set_sample_time_on_all_channels(ADC1, ADC_SMPTIME_041DOT5);
 	adc_power_on(ADC1);
    
+
+	/* Wait for ADC starting up. */
+	for (i = 0; i < 800000; i++)    /* Wait a bit. */
+		__asm__("nop");
+
+	adc_reset_calibration(ADC1);
+	adc_calibrate(ADC1);
+  
+	for (i = 0; i < 800000; i++)    /* Wait a bit. */
+		__asm__("nop");
   // On NAZE32 board, PPM input 4 (channel 3) goes thru a digital or gate, and
   // is not suitable for ADC
   // PPM 5 is mapped to channel 6 
@@ -194,13 +204,6 @@ static void adc_setup(void)
   adc_set_regular_sequence(ADC1, 4, channels);
   adc_enable_dma(ADC1);
 
-
-	/* Wait for ADC starting up. */
-	for (i = 0; i < 800000; i++)    /* Wait a bit. */
-		__asm__("nop");
-
-	//adc_reset_calibration(ADC1);
-	//adc_calibrate(ADC1);
     
 }
 
@@ -278,25 +281,30 @@ static void int2bufbin(uint16_t value, char *buffer)
   buffer[nr_digits] = '\0';
 }
 
-void int2bufhex(uint16_t num, char *outbuf)
+void int2bufhex(int16_t num, char *outbuf)
 {
 
-    int i = 12;
-    int j = 2;
-    outbuf[0]='0';
-    outbuf[1]='x';
+  int i = 12;
+  int j = 2;
+  outbuf[0]='0';
+  outbuf[1]='x';
+  if (num < 0) {
+    outbuf[j++] = '-';
+    num = num * -1;
+  }
 
-    do{
-        outbuf[i] = "0123456789ABCDEF"[num % 16];
-        i--;
-        num = num/16;
-    }while( num > 0);
 
-    while( ++i < 13){
-       outbuf[j++] = outbuf[i];
-    }
+  do {
+    outbuf[i] = "0123456789ABCDEF"[num % 16];
+    i--;
+    num = num/16;
+  } while( num > 0);
 
-    outbuf[j] = 0;
+  while( ++i < 13) {
+    outbuf[j++] = outbuf[i];
+  }
+
+  outbuf[j] = 0;
 
 }
 
@@ -327,36 +335,29 @@ int main(void)
   adc_dma_arm();
   while (!dma_get_interrupt_flag(DMA1, DMA_CHANNEL1, DMA_TCIF))
     __asm__("nop");
+    static int16_t adjusted[ADC_CHANNEL_COUNT];
+    for (int i = 0; i < ADC_CHANNEL_COUNT; i++) {
+      adjusted[i] = (int16_t)adc_data[i] - 0x800;
+      if (adjusted[i] < -0x600)
+        adjusted[i] = -0x600;
+      if (adjusted[i] > 0x600)
+        adjusted[i] = 0x600;
+    }
 
     // Render screen
     u8g2_FirstPage(&u8g2);
+    u8g2_SetFont(&u8g2, u8g2_font_amstrad_cpc_extended_8f);
     gpio_clear(GPIOB, GPIO4);
     do {
-      u8g2_DrawLine(&u8g2, 64-j, 64-j, j, j);
-      u8g2_SetFont(&u8g2, u8g2_font_amstrad_cpc_extended_8f);
+      //u8g2_DrawLine(&u8g2, 64-j, 64-j, j, j);
 
-      if (dma_get_interrupt_flag(DMA1, DMA_CHANNEL1, DMA_TCIF))
-          u8g2_DrawStr(&u8g2, 50, 10, "TCIF1:1");
-      else
-          u8g2_DrawStr(&u8g2, 50, 10, "TCIF1:0");
-      if (dma_get_interrupt_flag(DMA1, DMA_CHANNEL1, DMA_HTIF))
-          u8g2_DrawStr(&u8g2, 50, 20, "HTIF1:1");
-      else
-          u8g2_DrawStr(&u8g2, 50, 20, "HTIF1:0");
-      if (dma_get_interrupt_flag(DMA1, DMA_CHANNEL1, DMA_TEIF))
-          u8g2_DrawStr(&u8g2, 50, 30, "TEIF1:1");
-      else
-          u8g2_DrawStr(&u8g2, 50, 30, "TEIF1:0");
-      if (dma_get_interrupt_flag(DMA1, DMA_CHANNEL1, DMA_GIF))
-          u8g2_DrawStr(&u8g2, 50, 40, "GIF1:1");
-      else
-          u8g2_DrawStr(&u8g2, 50, 40, "GIF1:0");
-
+      u8g2_DrawCircle(&u8g2, 32 + (adjusted[2] * 32 / 0x600), 32 + (adjusted[3] * 32 / 0x600), 2, U8G2_DRAW_ALL);
+      u8g2_DrawCircle(&u8g2, 96 + (adjusted[0] * 32 / 0x600), 32 + (adjusted[1] * 32 / 0x600), 2, U8G2_DRAW_ALL);
 
       for (int i = 0; i < 4; i++) {
-        int2bufhex(adc_data[i], buf);
-        u8g2_DrawStr(&u8g2, 0, (i * 10) + 10, buf);
-        u8g2_DrawLine(&u8g2, 0, (i * 2) + 50, adc_data[i] * 128 / 0xfff, (i * 2) + 50); // 128 px wide screen
+        //int2bufhex(adjusted[i], buf);
+        //u8g2_DrawStr(&u8g2, 0, (i * 10) + 10, buf);
+        u8g2_DrawLine(&u8g2, 0, (i * 2) + 57, (0x600 + adjusted[i]) * 128 / 0xc00, (i * 2) + 57); // 128 px wide screen
       }
     } while ( u8g2_NextPage(&u8g2) );
     gpio_set(GPIOB, GPIO4);
