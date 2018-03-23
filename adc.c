@@ -28,6 +28,7 @@
 #include <libopencm3/cm3/nvic.h>
 #include <libopencm3/stm32/i2c.h>
 #include "u8g2.h"
+#include "spi.h"
 
 u8g2_t u8g2;
 uint8_t u8x8_gpio_and_delay_i2c(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_ptr)
@@ -318,6 +319,7 @@ int main(void)
   //systick_setup();
 	adc_setup();
   adc_init_dma();
+  spi_init();
 
   u8g2_Setup_ssd1306_i2c_128x64_noname_2(&u8g2, U8G2_R0, u8x8_byte_sw_i2c, u8x8_gpio_and_delay_i2c);
 

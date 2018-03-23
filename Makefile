@@ -16,7 +16,7 @@ flash: adc.elf
 
 %.o: %.c
 	$(CC) $(CFLAGS) -o $@ -c $<
-adc.elf: adc.o
+adc.elf: adc.o spi.o
 	$(CC) --static -nostartfiles -Tadc.ld $(LDFLAGS) -Wl,-Map=adc.map -Wl,--cref -Wl,--gc-sections -Llibopencm3/lib -L. $^ -lopencm3_stm32f1 -Wl,--start-group u8g2.a -lc -lgcc -lnosys -Wl,--end-group -o adc.elf
 
 openocd:
