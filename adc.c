@@ -188,7 +188,7 @@ static void adc_setup(void)
 	adc_power_on(ADC1);
     
   uint8_t channels[16] = { 0, 1, 2, 3};
-  adc_set_regular_sequence(ADC1, sizeof(channels), channels);
+  adc_set_regular_sequence(ADC1, 4, channels);
   adc_enable_dma(ADC1);
 
 
