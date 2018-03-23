@@ -137,7 +137,7 @@ static void gpio_setup(void)
 	rcc_periph_clock_enable(RCC_GPIOA);
 	rcc_periph_clock_enable(RCC_GPIOB);
 	rcc_periph_clock_enable(RCC_GPIOC);
-	rcc_periph_clock_enable(RCC_AFIO);
+	//rcc_periph_clock_enable(RCC_AFIO);
 
   // Turn off jtag mode
   gpio_primary_remap(AFIO_MAPR_SWJ_CFG_JTAG_OFF_SW_ON,0);
@@ -156,10 +156,9 @@ static uint16_t adc_data[ADC_CHANNEL_COUNT];
 static void adc_setup(void)
 {
 	int i;
-  for (int i = 0; i < 4; i++)
-    adc_data[i] = i;
-
-	rcc_periph_clock_enable(RCC_ADC1);
+  rcc_periph_clock_enable(RCC_GPIOA);
+  rcc_periph_clock_enable(RCC_GPIOB);
+  rcc_periph_clock_enable(RCC_ADC1);
   rcc_periph_clock_enable(RCC_DMA1);
   gpio_set_mode(GPIOA, GPIO_MODE_INPUT, GPIO_CNF_INPUT_ANALOG, GPIO0);
 	gpio_set_mode(GPIOA, GPIO_MODE_INPUT, GPIO_CNF_INPUT_ANALOG, GPIO1);
@@ -169,21 +168,29 @@ static void adc_setup(void)
 	/* Make sure the ADC doesn't run during config. */
 	adc_power_off(ADC1);
 
-	/* We configure everything for one single conversion. */
 	//adc_disable_scan_mode(ADC1);
-	//adc_set_single_conversion_mode(ADC1);
-  adc_set_continuous_conversion_mode(ADC1);
-	adc_disable_external_trigger_regular(ADC1);
+  adc_enable_scan_mode(ADC1); /*scan mode means we scan all channels of the group to the end */
+  //adc_set_continuous_conversion_mode(ADC1); /* means we scan the group the whole day til someone disable continous mode */
+  //adc_disable_discontinuous_mode_regular(ADC1); /* discontinous mode means all channels in a group will be */
+  
+  adc_enable_external_trigger_regular(ADC1, ADC_CR2_EXTSEL_SWSTART);
 	adc_set_right_aligned(ADC1);
-  //adc_set_resolution(ADC1, ADC_RESOLUTION_12BIT);
-  adc_disable_analog_watchdog_regular(ADC1);
-    
-  uint8_t channels[] = { 0, 1, 2, 3};
-	adc_set_sample_time_on_all_channels(ADC1, ADC_SMPR_SMP_28DOT5CYC);
-  //adc_set_sample_time_on_all_channels(ADC1, ADC_SMPTIME_041DOT5);
-  adc_set_regular_sequence(ADC1, sizeof(channels), channels);
 
+
+	/* We configure everything for one single conversion. */
+	adc_set_single_conversion_mode(ADC1);
+  //adc_set_continuous_conversion_mode(ADC1);
+	//adc_disable_external_trigger_regular(ADC1);
+  //adc_set_resolution(ADC1, ADC_RESOLUTION_12BIT);
+  //adc_disable_analog_watchdog_regular(ADC1);
+	//adc_set_sample_time_on_all_channels(ADC1, ADC_SMPR_SMP_28DOT5CYC);
+  //adc_set_sample_time_on_all_channels(ADC1, ADC_SMPTIME_041DOT5);
 	adc_power_on(ADC1);
+    
+  uint8_t channels[16] = { 0, 1, 2, 3};
+  adc_set_regular_sequence(ADC1, sizeof(channels), channels);
+  adc_enable_dma(ADC1);
+
 
 	/* Wait for ADC starting up. */
 	for (i = 0; i < 800000; i++)    /* Wait a bit. */
@@ -192,7 +199,6 @@ static void adc_setup(void)
 	//adc_reset_calibration(ADC1);
 	//adc_calibrate(ADC1);
     
-  adc_enable_dma(ADC1);
 }
 
 static void adc_dma_arm(void) {
@@ -233,22 +239,12 @@ static void adc_init_dma(void) {
     // chunk of data to be transfered
     dma_set_number_of_data(DMA1, DMA_CHANNEL1, ADC_CHANNEL_COUNT);
 
-    // start conversion:
-    adc_dma_arm();
+    //dma_enable_transfer_complete_interrupt(DMA1, DMA_CHANNEL1);
+
+
 }
 
 
-
-static uint16_t read_adc_naiive(uint8_t channel)
-{
-	uint8_t channel_array[16] = {};
-	channel_array[0] = channel;
-	adc_set_regular_sequence(ADC1, 1, channel_array);
-	adc_start_conversion_direct(ADC1);
-	while (!adc_eoc(ADC1));
-	uint16_t reg16 = adc_read_regular(ADC1);
-	return reg16;
-}
 
 static void int2buf(uint16_t value, char *buffer)
 {
@@ -304,9 +300,6 @@ void int2bufhex(uint16_t num, char *outbuf)
 
 int main(void)
 {
-	uint8_t channel_array[16];
-	uint16_t temperature;
-
   rcc_clock_setup_in_hse_12mhz_out_72mhz();
  
   gpio_setup(); 
@@ -326,12 +319,37 @@ int main(void)
   char buf[32];
 	while(1) {
 
+  // Clear dma interrupt, run adc and wait for new interrupt
+  dma_clear_interrupt_flags(DMA1, DMA_CHANNEL1, DMA_TCIF);
+  adc_dma_arm();
+  while (!dma_get_interrupt_flag(DMA1, DMA_CHANNEL1, DMA_TCIF))
+    __asm__("nop");
+
     // Render screen
     u8g2_FirstPage(&u8g2);
     gpio_clear(GPIOB, GPIO4);
     do {
       u8g2_DrawLine(&u8g2, 64-j, 64-j, j, j);
       u8g2_SetFont(&u8g2, u8g2_font_amstrad_cpc_extended_8f);
+
+      if (dma_get_interrupt_flag(DMA1, DMA_CHANNEL1, DMA_TCIF))
+          u8g2_DrawStr(&u8g2, 50, 10, "TCIF1:1");
+      else
+          u8g2_DrawStr(&u8g2, 50, 10, "TCIF1:0");
+      if (dma_get_interrupt_flag(DMA1, DMA_CHANNEL1, DMA_HTIF))
+          u8g2_DrawStr(&u8g2, 50, 20, "HTIF1:1");
+      else
+          u8g2_DrawStr(&u8g2, 50, 20, "HTIF1:0");
+      if (dma_get_interrupt_flag(DMA1, DMA_CHANNEL1, DMA_TEIF))
+          u8g2_DrawStr(&u8g2, 50, 30, "TEIF1:1");
+      else
+          u8g2_DrawStr(&u8g2, 50, 30, "TEIF1:0");
+      if (dma_get_interrupt_flag(DMA1, DMA_CHANNEL1, DMA_GIF))
+          u8g2_DrawStr(&u8g2, 50, 40, "GIF1:1");
+      else
+          u8g2_DrawStr(&u8g2, 50, 40, "GIF1:0");
+
+
       for (int i = 0; i < 4; i++) {
         int2bufhex(adc_data[i], buf);
         u8g2_DrawStr(&u8g2, 0, (i * 10) + 10, buf);
@@ -339,7 +357,6 @@ int main(void)
       }
     } while ( u8g2_NextPage(&u8g2) );
     gpio_set(GPIOB, GPIO4);
-
     if (j == 64) {
       j=0;
     } else {
