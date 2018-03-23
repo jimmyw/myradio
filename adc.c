@@ -186,8 +186,11 @@ static void adc_setup(void)
 	//adc_set_sample_time_on_all_channels(ADC1, ADC_SMPR_SMP_28DOT5CYC);
   //adc_set_sample_time_on_all_channels(ADC1, ADC_SMPTIME_041DOT5);
 	adc_power_on(ADC1);
-    
-  uint8_t channels[16] = { 0, 1, 2, 3};
+   
+  // On NAZE32 board, PPM input 4 (channel 3) goes thru a digital or gate, and
+  // is not suitable for ADC
+  // PPM 5 is mapped to channel 6 
+  uint8_t channels[16] = { 0, 1, 2, 6};
   adc_set_regular_sequence(ADC1, 4, channels);
   adc_enable_dma(ADC1);
 
